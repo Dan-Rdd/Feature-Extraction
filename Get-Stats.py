@@ -51,6 +51,11 @@ def compute_features(packets_list, label):
             totalbytes = sum(flow_total_bytes)
         return totalbytes 
 
+    def compute_type(packets_list):
+        first = packets_list[0]
+        return first.layers()[-1]._name
+
+
     # Counts the number of packets with the tcp layer that have little or no payload
     def compute_packet_with_small_TCP_payload(packets_list, count_packet_without_payload=False):
         packets_small_payload_count = []
@@ -165,6 +170,10 @@ def compute_features(packets_list, label):
                 rst_counter.append(0.0)
         return (syn_counter, fin_counter, ack_counter, psh_counter, urg_counter, rst_counter)
 
+    #def get_fuple(pkts):
+     #   first = packets_list[0]
+      #  f = first['TCP'] if first.haslayer('TCP') else first['UDP']
+       # return [first['IP'].src, first['IP'].dst, f.sport, f.dport]
     def compute_type(packets_list):
         first = packets_list[0]
         return first['IP'].proto
@@ -173,14 +182,21 @@ def compute_features(packets_list, label):
         first = packets_list[0]
         return len(first)
 
-    syn_lst, fin_lst, ack_lst, psh_lst, urg_lst, rst_lst = compute_tcp_flags(packets_list)
-    syn_avg = compute_avg(syn_lst)
-    fin_avg = compute_avg(fin_lst)
-    ack_avg = compute_avg(ack_lst)
-    psh_avg = compute_avg(psh_lst)
-    urg_avg = compute_avg(urg_lst)
-    rst_avg = compute_avg(rst_lst)
 
+    syn_lst, fin_lst, ack_lst, psh_lst, urg_lst, rst_lst = compute_tcp_flags(packets_list)
+    #syn_avg = compute_avg(syn_lst)
+    #fin_avg = compute_avg(fin_lst)
+    #ack_avg = compute_avg(ack_lst)
+    #psh_avg = compute_avg(psh_lst)
+    #urg_avg = compute_avg(urg_lst)
+    #rst_avg = compute_avg(rst_lst)
+    syn_avg = sum(syn_lst)
+    fin_avg = sum(fin_lst)
+    ack_avg = sum(ack_lst)
+    psh_avg = sum(psh_lst)
+    urg_avg = sum(urg_lst)
+    rst_avg = sum(rst_lst)
+    
     durationFlow = compute_duration_flow(packets_list)
     avgTimeFlow = compute_avg(compute_delta_time(packets_list))
     minTimeFlow = compute_min(compute_delta_time(packets_list))
@@ -197,32 +213,41 @@ def compute_features(packets_list, label):
     maxPayload = compute_max(compute_packet_TCP_payload_size(packets_list, False))
     stDevPayload = compute_stDev(compute_packet_TCP_payload_size(packets_list, False))
     length1stpkt = compute_1st_packet(packets_list)
-    row = [compute_type(packets_list), syn_avg, urg_avg, fin_avg, ack_avg, psh_avg, rst_avg, durationFlow, avgTimeFlow,
-            minTimeFlow, maxTimeFlow, stdevTimeFlow, length1stpkt, pktLenghtAvg, pktLenghtMin, pktLenghtMax, pktLengthTotal, pktLenghtStDev, smallPktPayloadAvg,
-            avgPayload, minPayload, maxPayload, stDevPayload, len(packets_list), label]
+
+#    row = get_fuple(packets_list) + [compute_type(packets_list), syn_avg, urg_avg, fin_avg, ack_avg, psh_avg, rst_avg, durationFlow, avgTimeFlow,
+#            minTimeFlow, maxTimeFlow, stdevTimeFlow, pktLenghtAvg, pktLenghtMin, pktLenghtMax, pktLengthTotal, pktLenghtStDev, smallPktPayloadAvg,
+#            avgPayload, minPayload, maxPayload, stDevPayload, len(packets_list), label]
+#    return row
+
+    row = [compute_type(packets_list), syn_avg, fin_avg, psh_avg, durationFlow, length1stpkt, pktLenghtAvg, 
+             pktLenghtMin, pktLenghtStDev, len(packets_list), label]
     return row
+     
 
 
 
 def main():
     DEST  = 'features.csv'
-    SRC   = 'good.pcap'
+    SRC   = 'E:/mal/20k-Malware merged.pcap'
     LABEL = 'Malware'
 
 
     with open(DEST, 'w') as f:
         c = csv.writer(f)
-        c.writerow(["type", "Avg_syn_flag", "Avg_urg_flag", "Avg_fin_flag", "Avg_ack_flag", "Avg_psh_flag", "Avg_rst_flag", 
+        '''c.writerow(["src_ip", "dst_ip", "sport", "dport", "type", "Avg_syn_flag", "Avg_urg_flag", "Avg_fin_flag", "Avg_ack_flag", "Avg_psh_flag", "Avg_rst_flag", 
             "Duration_window_flow", "Avg_delta_time", "Min_delta_time", "Max_delta_time", "StDev_delta_time",
-            "1st_Pkt_length", "Avg_pkts_lenght", "Min_pkts_lenght", "Max_pkts_lenght", "Total_pkts_Length" , "StDev_pkts_lenght", "Avg_small_payload_pkt", "Avg_payload", "Min_payload",
+            "Avg_pkts_lenght", "Min_pkts_lenght", "Max_pkts_lenght", "Total_pkts_Length" , "StDev_pkts_lenght", "Avg_small_payload_pkt", "Avg_payload", "Min_payload",
             "Max_payload", "StDev_payload", "Num Packets", "Label"])
-
+        '''
+        c.writerow([ "type", "syn.flag", "fin.flag", "psh.flag", 
+         "Duration.window.flow", "1st.pkt.Length", "Avg.pkts.lenght", "Min.pkts.lenght", "StDev.pkts.lenght", 
+         "Num.Packets", "Label"])
 
         a = rdpcap(SRC)
         s = a.sessions()
 
         for k,v in s.items():
-            if  v[0].haslayer('IP'): 
+            if  v[0].haslayer('IP') and (v[0].haslayer('TCP') or v[0].haslayer('UDP')):
                 t = compute_features(v, LABEL)
                 c.writerow(t)
             else:
