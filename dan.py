@@ -1,0 +1,209 @@
+from scapy.all import *
+from dataclasses import dataclass
+import statistics
+import csv
+
+@dataclass(frozen=True)
+class Fuple:
+    """Class for tracking src ip:port and dst ip:port"""
+    src: str
+    src_port: int
+    dst: str
+    dst_port: int
+    protocol: str # TCP=6, UDP=17
+
+    def reverse(self):
+        return Fuple(self.dst, self.dst_port, self.src, self.src_port, self.protocol)
+
+    def proto2int(self):
+        if self.protocol == "TCP":
+            return 6
+        if self.protocol == "UDP":
+            return 17
+        else:
+            return 0
+
+@dataclass(frozen=True)
+class PacketFeatures:
+    length: int
+    payload_length: int
+    time: int
+    flags: int
+    
+def extract_flows(p):
+    # type: (Packet) -> Fuple
+    """Extract Fuple from packets"""
+    if 'IP' in p:
+        if 'TCP' in p:
+            proto = p['TCP']
+        elif 'UDP' in p:
+            proto = p['UDP']
+        else:
+            return None
+
+        return Fuple(p['IP'].src, proto.sport, p['IP'].dst, proto.dport, proto._name)
+
+    return None
+
+def extract_features(fuple, packet):
+    def get_payload_size(packet):
+        """Get TCP/UDP payload size"""
+        if packet.payload is None:
+            return 0.0
+        else:
+            return float(len(packet.payload))
+
+    return PacketFeatures(
+        float(len(packet)),
+        get_payload_size(packet[fuple.protocol]),
+        packet.time,
+        packet["TCP"].flags.value if packet.haslayer("TCP") else 0
+    )
+
+def tcp_flags(packets):
+    # List[PacketFeatures] -> Tuple[int]
+    FIN = 0x01
+    SYN = 0x02
+    RST = 0x04
+    PSH = 0x08
+    ACK = 0x10
+    URG = 0x20
+
+    n_fin = n_syn = n_rst = n_psh = n_ack = n_urg = 0
+    for pkt in packets:
+        F = pkt.flags
+        if F & FIN:
+            n_fin += 1
+        if F & SYN:
+            n_syn += 1
+        if F & RST:
+            n_rst += 1
+        if F & PSH:
+            n_psh += 1
+        if F & ACK:
+            n_ack += 1
+        if F & URG:
+            n_urg += 1
+
+    return (n_fin, n_syn, n_rst, n_psh, n_ack, n_urg)
+
+
+def stdev(lst):
+    if len(lst) <= 1:
+        return 0.0
+
+    return float(statistics.stdev(lst))
+
+
+def main():
+    DEST  = 'features.csv'
+#    SRC   = 'E:/mal/20k-Malware merged.pcap'
+    SRC   = 'good.pcap'
+    LABEL = 'Malware'
+
+    HEADER_ROW = [
+        "protocol",
+        "syn.flag",
+        "ack.flag",
+        "fin.flag",
+        "psh.flag",
+        "rst.flag",
+        "urg.flag",
+        "duration",
+        "num.pkts",
+        "first.pkt.length",
+        "total.pkt.length",
+        "avg.pkt.length",
+        "min.pkt.length",
+        "max.pkt.length",
+        "stdev.pkt.length", 
+        "total.payload.length",
+        "avg.payload.length",
+        "min.payload.length",
+        "max.payload.length",
+        "stdev.payload.length", 
+        "label"
+    ]
+
+    flows = defaultdict(list)  # type: DefaultDict[str, _PacketList[_Inner]]  # noqa: E501
+    processed = []
+
+    def process_packet(p):
+        processed.append(True)
+        fuple = extract_flows(p)
+
+        if fuple is None:
+            return
+
+        if fuple not in flows: # not existing
+            rev = fuple.reverse()
+            if rev in flows: # response
+                fuple = rev
+
+        flows[fuple].append(extract_features(fuple, p))
+
+    with open(DEST, 'w') as f:
+        c = csv.writer(f)
+        c.writerow(HEADER_ROW)
+
+        sniff(offline=SRC, prn=process_packet, store=False, filter="tcp or udp")
+        print(f"Processed: {len(processed)}")
+        print("Now running feature analysis...")
+
+        for flow,packets in flows.items():
+            # Grab Number of Flags
+            (n_fin, n_syn, n_rst, n_psh, n_ack, n_urg) = tcp_flags(packets)
+
+            duration = packets[-1].time - packets[0].time
+
+            # Packet Length Statistics
+            packet_sizes = [pkt.length for pkt in packets]
+            first_packet_sz = packets[0].length
+            total_packet_sz = sum(packet_sizes)
+            avg_packet_sz = float(total_packet_sz / len(packets))
+            min_packet_sz = min(packet_sizes)
+            max_packet_sz = max(packet_sizes)
+            stdev_packet_sz = stdev(packet_sizes)
+
+            # Payload Statistics
+            payload_sizes = [pkt.payload_length for pkt in packets]
+            total_payload_sz = sum(payload_sizes)
+            avg_payload_sz = float(total_payload_sz / len(packets))
+            min_payload_sz = min(payload_sizes)
+            max_payload_sz = max(payload_sizes)
+            stdev_payload_sz = stdev(payload_sizes)
+            
+            c.writerow([
+                flow.proto2int(),                          #protocol
+                n_syn,                                     #syn.flag
+                n_ack,                                     #ack.flag
+                n_fin,                                     #fin.flag
+                n_psh,                                     #psh.flag
+                n_rst,                                     #rst.flag
+                n_urg,                                     #urg.flag
+                duration,                                  #duration
+                len(packets),                              #num.pkts
+                first_packet_sz,                           #first.pkt.length
+                total_packet_sz,                           #total.pkt.length
+                avg_packet_sz,                             #avg.pkt.length
+                min_packet_sz,                             #min.pkt.length
+                max_packet_sz,
+                stdev_packet_sz,                           #stdev.pkt.length
+                total_payload_sz,                          #total.payload.length
+                avg_payload_sz,                            #avg.payload.length
+                min_payload_sz,                            #min.payload.length
+                max_payload_sz,
+                stdev_payload_sz,                          #stdev.payload.length
+                LABEL                                      #label
+            ])
+
+        print(f"Saved to {DEST}")
+        return flows
+
+
+flows = main()
+
+#import timeit
+#print(timeit.timeit(lambda: main(''), number=1))
+#print(timeit.timeit(lambda: main("tcp or udp"), number=1))
+
